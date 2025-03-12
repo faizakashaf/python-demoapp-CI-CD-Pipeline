@@ -1,0 +1,107 @@
+pipeline {
+    agent any
+
+    tools {
+        jdk 'jdk17'
+        maven 'maven3'
+    }
+    
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+    }
+    
+    stages {
+        stage('Update & Check Python Version') {
+            steps {
+                sh 'sudo apt update && sudo apt -y upgrade'
+                sh 'python3 -v'
+            }
+        }
+
+        stage('Check Docker Version') {
+            steps {
+                sh 'docker -v'
+            }
+        }
+        
+        stage('Install Make') {
+            steps {
+                       sh '''
+           sudo apt update -y
+            sudo apt remove -y make-guile
+            sudo apt install -y make
+        '''
+
+            }
+        }
+        
+        stage('GitHub Checkout') {
+            steps {
+                git branch: 'master', url: 'https://github.com/faizakashaf/python-demoapp-CI-CD-Pipeline.git'
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh '''
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=python-app \
+                        -Dsonar.java.binaries=. \
+                        -Dsonar.projectKey=python-app
+                    '''
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                sh 'make image'
+            }
+        }
+        
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh 'make push'
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy Docker Container') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh 'docker images'
+                        sh 'docker run --rm -it -d -p 5000:5000 faizakashaf12/python-app:latest'
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+    always {
+        script {
+            emailext(
+                subject: "Jenkins Pipeline Status: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """<html>
+                            <body>
+                                <p><strong>Build Status:</strong> ${currentBuild.currentResult}</p>
+                                <p><strong>Build Number:</strong> ${env.BUILD_NUMBER}</p>
+                                <p>Check the <a href="${env.BUILD_URL}">console output</a> for details.</p>
+                            </body>
+                         </html>""",
+                recipientProviders: [developers()], // Ensure developers are configured in Jenkins
+                to: 'faizakashaf4@gmail.com',
+                from: 'faizakashaf4@gmail.com',
+                replyTo: 'faizakashaf4@gmail.com',
+                mimeType: 'text/html'
+            )
+        }
+    }
+}
+
+}
